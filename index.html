@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head><title>WebCodecs test</title></head>
+  <body>
+    <button id="run_js">Run JS</button>
+    <button id="run_wasm">Run WASM</button>
+    <div>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <script type="module">
+        import init, { get_frames, run_wasm } from './webcodecs.js';
+        await init('./webcodecs_bg.wasm');
+
+        document.querySelector('#run_js').addEventListener('click', runJS);
+        document.querySelector('#run_wasm').addEventListener('click', run_wasm);
+
+        function runJS() {
+            const frames = get_frames();
+            const canvas = document.querySelector('#canvas');
+            const context = canvas.getContext('2d');
+            const decoder = new VideoDecoder({
+              output: (f) => {
+                context.drawImage(f, 0, 0, f.width, f.height, 0, 0, canvas.width, canvas.height);
+                f.close();
+              },
+              error: (e) => {
+                  console.log(e);
+              },
+            });
+
+            decoder.configure({
+              codec: "hev1.1.2.L153.90",
+              hardwareAcceleration: "prefer-hardware",
+            });
+
+            let frameNum = 0;
+            setInterval(() => {
+              decoder.decode(new EncodedVideoChunk({
+                timestamp: 0,
+                type: frameNum % frames.length == 0 ? 'key': 'delta',
+                data: frames[frameNum % frames.length],
+              }));
+              ++frameNum;
+            }, 50);
+        }
+    </script>
+  </body>
+</html>

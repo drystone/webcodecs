@@ -1,0 +1,6 @@
+#!/bin/sh
+
+set -e
+
+wasm-pack build --release --target web --out-dir release
+cp index.html release/
