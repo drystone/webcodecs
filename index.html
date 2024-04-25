@@ -1,19 +1,34 @@
 <!DOCTYPE html>
 <html>
-<head><title>WebCodecs test</title></head>
+  <head>
+    <title>WebCodecs test</title>
+    <style>
+      html, body {
+        width: 100%;
+        height: 100%;
+        padding: 0;
+        margin: 0;
+      }
+      #canvas {
+        width: 50%;
+      }
+    </style>
+  </head>
   <body>
     <button id="run_js">Run JS</button>
     <button id="run_wasm">Run WASM</button>
+    <button id="run_wasm_gl">Run WASM GL</button>
     <div>
       <canvas id="canvas"></canvas>
     </div>
 
     <script type="module">
-        import init, { get_frames, run_wasm } from './webcodecs.js';
+        import init, { get_frames, run_wasm, run_wasm_gl } from './webcodecs.js';
         await init('./webcodecs_bg.wasm');
 
         document.querySelector('#run_js').addEventListener('click', runJS);
         document.querySelector('#run_wasm').addEventListener('click', run_wasm);
+        document.querySelector('#run_wasm_gl').addEventListener('click', run_wasm_gl);
 
         function runJS() {
             const frames = get_frames();
