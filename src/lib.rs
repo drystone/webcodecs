@@ -190,6 +190,157 @@ pub fn run_wasm_gl() {
     timer_callback.forget();
 }
 
+#[wasm_bindgen]
+pub fn test_wasm_vr() -> js_sys::Promise {
+    web_sys::window()
+        .unwrap()
+        .navigator()
+        .xr()
+        .is_session_supported(web_sys::XrSessionMode::ImmersiveVr)
+}
+
+#[wasm_bindgen]
+pub async fn run_wasm_vr() {
+    let canvas = web_sys::window()
+        .unwrap()
+        .document()
+        .unwrap()
+        .get_element_by_id("canvas")
+        .unwrap()
+        .dyn_into::<web_sys::HtmlCanvasElement>()
+        .unwrap();
+
+    let context = canvas
+        .get_context("webgl2")
+        .unwrap()
+        .unwrap()
+        .dyn_into::<web_sys::WebGl2RenderingContext>()
+        .unwrap();
+
+    prepare_gl_context(&context).unwrap();
+
+    if let Err(e) = {
+        let promise = context.make_xr_compatible();
+        wasm_bindgen_futures::JsFuture::from(promise).await
+    } {
+        console_log!("not xr compatible: {e:?}");
+        return;
+    }
+
+    let session: web_sys::XrSession = {
+        let mut options = web_sys::XrSessionInit::new();
+        options.required_features(
+            &[JsValue::from_str("local-floor")]
+                .iter()
+                .collect::<js_sys::Array>(),
+        );
+        let promise = web_sys::window()
+            .unwrap()
+            .navigator()
+            .xr()
+            .request_session_with_options(web_sys::XrSessionMode::ImmersiveVr, &options);
+
+        match wasm_bindgen_futures::JsFuture::from(promise).await {
+            Ok(session) => session.dyn_into::<web_sys::XrSession>().unwrap(),
+            Err(e) => {
+                console_log!("request_session: {e:?}");
+                return;
+            }
+        }
+    };
+
+    let gl_layer = web_sys::XrWebGlLayer::new_with_web_gl2_rendering_context(&session, &context)
+        .map_err(|e| console_log!("gl_layer: {e:?}"))
+        .unwrap();
+    let mut render_state = web_sys::XrRenderStateInit::new();
+    render_state.base_layer(Some(&gl_layer));
+    session.update_render_state_with_state(&render_state);
+    context.bind_framebuffer(
+        web_sys::WebGl2RenderingContext::FRAMEBUFFER,
+        gl_layer.framebuffer().as_ref(),
+    );
+
+    let output_callback = {
+        let width = canvas.width() as i32;
+        let height = canvas.height() as i32;
+        Closure::<dyn Fn(_)>::new(move |frame: web_sys::VideoFrame| {
+            console_log!("drawing frame");
+            context.viewport(-width, -height, width * 2, height * 2);
+
+            context
+                .tex_image_2d_with_u32_and_u32_and_video_frame(
+                    web_sys::WebGl2RenderingContext::TEXTURE_2D,
+                    0,
+                    web_sys::WebGl2RenderingContext::RGBA as i32,
+                    web_sys::WebGl2RenderingContext::RGBA,
+                    web_sys::WebGl2RenderingContext::UNSIGNED_BYTE,
+                    &frame,
+                )
+                .unwrap();
+
+            context.draw_arrays(web_sys::WebGl2RenderingContext::TRIANGLES, 0, 6);
+
+            frame.close();
+        })
+    };
+
+    let error_callback = Closure::<dyn Fn(_)>::new(move |e: web_sys::ErrorEvent| {
+        console_log!("decoder error: {e:?}");
+    });
+
+    let init = web_sys::VideoDecoderInit::new(
+        error_callback.as_ref().unchecked_ref(),
+        output_callback.as_ref().unchecked_ref(),
+    );
+    let decoder = web_sys::VideoDecoder::new(&init).unwrap();
+    let mut config = web_sys::VideoDecoderConfig::new("hev1.1.2.L153.90");
+    config.hardware_acceleration(web_sys::HardwareAcceleration::PreferHardware);
+    decoder.configure(&config);
+
+    output_callback.forget();
+    error_callback.forget();
+
+    console_log!("decoder is {:?}", decoder.state());
+    {
+        let promise = js_sys::Promise::new(&mut |resolve, _| {
+            web_sys::window()
+                .unwrap()
+                .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 1000)
+                .unwrap();
+        });
+        let _ = wasm_bindgen_futures::JsFuture::from(promise).await;
+    }
+    console_log!("decoder is {:?}", decoder.state());
+
+    let frames = get_frames();
+    let mut frame_num = 0;
+    let timer_callback = {
+        Closure::<dyn FnMut()>::new(move || {
+            let frame_type = if frame_num % frames.len() == 0 {
+                web_sys::EncodedVideoChunkType::Key
+            } else {
+                web_sys::EncodedVideoChunkType::Delta
+            };
+            let frame_init = web_sys::EncodedVideoChunkInit::new(
+                &frames[frame_num % frames.len()],
+                0.0,
+                frame_type,
+            );
+            let frame = web_sys::EncodedVideoChunk::new(&frame_init).unwrap();
+
+            decoder.decode(&frame);
+            frame_num += 1;
+        })
+    };
+    let _ = web_sys::window()
+        .unwrap()
+        .set_interval_with_callback_and_timeout_and_arguments_0(
+            timer_callback.as_ref().unchecked_ref(),
+            50,
+        );
+    timer_callback.forget();
+}
+
 fn split_video(video: &'static [u8]) -> Vec<&'static [u8]> {
     let nalu_offsets = video
         .windows(4)
